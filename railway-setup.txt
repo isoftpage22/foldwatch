@@ -1,8 +1,32 @@
 Foldwatch on Railway — quick checklist
 ========================================
 
-Architecture: one MySQL service (Railway template) + Backend (Docker) + Frontend (Docker).
+Architecture: MySQL (Railway) + Backend (Docker) + Frontend (Docker).
 Repo root must stay the build context (do NOT set Root Directory to apps/*).
+
+--- Fix "Build failed" on your GitHub service (e.g. foldwatch) ---
+There is NO Dockerfile at repo root. On that service open Variables and ADD:
+
+  RAILWAY_DOCKERFILE_PATH = docker/backend.Dockerfile
+
+Redeploy. (Backend API only until you add a second service for the UI.)
+
+--- Use Railway MySQL from your Variables tab (reference syntax) ---
+On the BACKEND app service (not on MySQL), add these. Replace MySQL with the
+EXACT tile name of your database on the canvas if it differs (e.g. MySQL).
+
+  RAILWAY_DOCKERFILE_PATH = docker/backend.Dockerfile
+
+  DATABASE_HOST     = ${{MySQL.MYSQLHOST}}
+  DATABASE_PORT     = ${{MySQL.MYSQLPORT}}
+  DATABASE_NAME     = ${{MySQL.MYSQLDATABASE}}
+  DATABASE_USER     = ${{MySQL.MYSQLUSER}}
+  DATABASE_PASS     = ${{MySQL.MYSQLPASSWORD}}
+
+That wires your app to the same DB Railway shows (e.g. MYSQLHOST=mysql.railway.internal,
+database name often "railway"). Do NOT paste passwords into the repo; only in Railway UI.
+
+Also add AI/env from apps/backend/.env: AI_PROVIDER, GEMINI_API_KEY, GEMINI_MODEL, etc.
 
 1) New project → Empty project (or GitHub repo).
 
