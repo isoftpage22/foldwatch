@@ -4,18 +4,27 @@ Foldwatch on Railway — quick checklist
 Architecture: MySQL (Railway) + Backend (Docker) + Frontend (Docker).
 Repo root must stay the build context (do NOT set Root Directory to apps/*).
 
---- Fix "Build failed" / Railpack "No start command" ---
-Railway used Railpack because it saw Node + pnpm but no root Dockerfile.
-The repo now has Dockerfile -> docker/backend.Dockerfile (symlink) so the DEFAULT
-GitHub service builds with Docker (Nest + Playwright image), not Railpack.
+--- Config as code (in this repo) ---
+• /railway.json — backend: builder DOCKERFILE, dockerfilePath docker/backend.Dockerfile,
+  watchPatterns so only backend-related paths trigger deploys.
+• /apps/frontend/railway.json — same for frontend + docker/frontend.Dockerfile.
 
-For a second service (Next.js frontend), set in THAT service only:
-  RAILWAY_DOCKERFILE_PATH = docker/frontend.Dockerfile
-Otherwise it would use the root Dockerfile (backend).
+The GitHub-connected BACKEND service uses the default config at repo root (railway.json).
+Railpack / “No start command” is avoided because builder is explicitly DOCKERFILE.
 
---- Use Railway MySQL from your Variables tab (reference syntax) ---
-On the BACKEND app service (not on MySQL), add these. Replace MySQL with the
-EXACT tile name of your database on the canvas if it differs (e.g. MySQL).
+For a FRONTEND service: Railway → that service → Settings → Config-as-code (or “Config file”)
+and set the path to the absolute repo path:
+
+  /apps/frontend/railway.json
+
+If you skip that, the frontend service would still read root railway.json and build the API image.
+
+(Root Dockerfile symlink is optional extra; railway.json is the source of truth for builder.)
+
+--- Variables (must still be set in Railway UI — not committed) ---
+Secrets and ${{ … }} references cannot live safely in git.
+
+On the BACKEND app service (not MySQL), replace MySQL with your DB tile name if needed:
 
   DATABASE_HOST     = ${{MySQL.MYSQLHOST}}
   DATABASE_PORT     = ${{MySQL.MYSQLPORT}}
@@ -23,53 +32,24 @@ EXACT tile name of your database on the canvas if it differs (e.g. MySQL).
   DATABASE_USER     = ${{MySQL.MYSQLUSER}}
   DATABASE_PASS     = ${{MySQL.MYSQLPASSWORD}}
 
-That wires your app to the same DB Railway shows (e.g. MYSQLHOST=mysql.railway.internal,
-database name often "railway"). Do NOT paste passwords into the repo; only in Railway UI.
+Also add from apps/backend/.env: AI_PROVIDER, GEMINI_API_KEY, GEMINI_MODEL, …
 
-Also add AI/env from apps/backend/.env: AI_PROVIDER, GEMINI_API_KEY, GEMINI_MODEL, etc.
+Optional: RAILWAY_SHM_SIZE_BYTES = 268435456 (Playwright / Chromium)
 
-1) New project → Empty project (or GitHub repo).
+On the FRONTEND service (after config path is set):
 
-2) Add MySQL: + New → Database → MySQL. Wait until running.
+  INTERNAL_API_URL = http://${{foldwatch.RAILWAY_PRIVATE_DOMAIN}}:${{foldwatch.PORT}}
 
-3) Backend service
-   - + New → GitHub Repo → same foldwatch repo.
-   - Settings → Root Directory: leave EMPTY (repo root).
-   - Variables (service):
-     RAILWAY_DOCKERFILE_PATH = docker/backend.Dockerfile
+Replace foldwatch with your backend service’s exact canvas name. Fallback:
 
-   - Variables (copy from MySQL — replace "MySQL" if you renamed the DB service):
-     DATABASE_HOST = ${{MySQL.MYSQLHOST}}
-     DATABASE_PORT = ${{MySQL.MYSQLPORT}}
-     DATABASE_NAME = ${{MySQL.MYSQLDATABASE}}
-     DATABASE_USER = ${{MySQL.MYSQLUSER}}
-     DATABASE_PASS = ${{MySQL.MYSQLPASSWORD}}
+  INTERNAL_API_URL = https://${{foldwatch.RAILWAY_PUBLIC_DOMAIN}}
 
-   - Add the rest from apps/backend/.env (AI keys, etc.):
-     AI_PROVIDER, GEMINI_API_KEY, GEMINI_MODEL, …
-
-   - Optional (Playwright/Chromium needs more shared memory on many hosts):
-     RAILWAY_SHM_SIZE_BYTES = 268435456
-
-   - Settings → Generate Domain (public URL for API if you need it).
-
-   Replace "MySQL" above with the exact MySQL service name shown on your canvas.
-
-4) Frontend service
-   - + New → same repo, Root Directory empty.
-   - Variables:
-     RAILWAY_DOCKERFILE_PATH = docker/frontend.Dockerfile
-
-   - Point server-side API proxy at backend (private network).
-     Replace "Backend" with your backend service’s exact name:
-     INTERNAL_API_URL = http://${{Backend.RAILWAY_PRIVATE_DOMAIN}}:${{Backend.PORT}}
-
-   - Settings → Generate Domain (this is your app URL).
-
-5) Deploy order: MySQL → Backend (migrations/schema: app uses synchronize:true) → Frontend.
-
-6) If INTERNAL_API_URL fails, try public URL instead:
-   INTERNAL_API_URL = https://${{Backend.RAILWAY_PUBLIC_DOMAIN}}
+--- Flow ---
+1) Add MySQL (Database → MySQL).
+2) Backend: GitHub repo, root directory empty — uses /railway.json automatically.
+3) Frontend: new service, same repo, root empty — set config file /apps/frontend/railway.json,
+   then add INTERNAL_API_URL + Generate Domain.
+4) Generate Domain on backend if you need a public API URL.
 
 Notes
 -----
