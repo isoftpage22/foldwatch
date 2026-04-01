@@ -1,0 +1,15 @@
+{
+  "name": "foldwatch",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev:backend": "pnpm --filter backend dev",
+    "dev:frontend": "pnpm --filter frontend dev",
+    "dev": "pnpm --parallel --filter backend --filter frontend dev",
+    "debug:backend": "pnpm --filter backend run start:debug",
+    "debug:frontend": "NODE_OPTIONS='--inspect=9230' pnpm --filter frontend dev",
+    "build": "pnpm run --parallel build:backend build:frontend",
+    "build:backend": "pnpm --filter backend build",
+    "build:frontend": "pnpm --filter frontend build"
+  }
+}

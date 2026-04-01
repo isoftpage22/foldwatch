@@ -1,0 +1,54 @@
+Foldwatch on Railway — quick checklist
+========================================
+
+Architecture: one MySQL service (Railway template) + Backend (Docker) + Frontend (Docker).
+Repo root must stay the build context (do NOT set Root Directory to apps/*).
+
+1) New project → Empty project (or GitHub repo).
+
+2) Add MySQL: + New → Database → MySQL. Wait until running.
+
+3) Backend service
+   - + New → GitHub Repo → same foldwatch repo.
+   - Settings → Root Directory: leave EMPTY (repo root).
+   - Variables (service):
+     RAILWAY_DOCKERFILE_PATH = docker/backend.Dockerfile
+
+   - Variables (copy from MySQL — replace "MySQL" if you renamed the DB service):
+     DATABASE_HOST = ${{MySQL.MYSQLHOST}}
+     DATABASE_PORT = ${{MySQL.MYSQLPORT}}
+     DATABASE_NAME = ${{MySQL.MYSQLDATABASE}}
+     DATABASE_USER = ${{MySQL.MYSQLUSER}}
+     DATABASE_PASS = ${{MySQL.MYSQLPASSWORD}}
+
+   - Add the rest from apps/backend/.env (AI keys, etc.):
+     AI_PROVIDER, GEMINI_API_KEY, GEMINI_MODEL, …
+
+   - Optional (Playwright/Chromium needs more shared memory on many hosts):
+     RAILWAY_SHM_SIZE_BYTES = 268435456
+
+   - Settings → Generate Domain (public URL for API if you need it).
+
+   Replace "MySQL" above with the exact MySQL service name shown on your canvas.
+
+4) Frontend service
+   - + New → same repo, Root Directory empty.
+   - Variables:
+     RAILWAY_DOCKERFILE_PATH = docker/frontend.Dockerfile
+
+   - Point server-side API proxy at backend (private network).
+     Replace "Backend" with your backend service’s exact name:
+     INTERNAL_API_URL = http://${{Backend.RAILWAY_PRIVATE_DOMAIN}}:${{Backend.PORT}}
+
+   - Settings → Generate Domain (this is your app URL).
+
+5) Deploy order: MySQL → Backend (migrations/schema: app uses synchronize:true) → Frontend.
+
+6) If INTERNAL_API_URL fails, try public URL instead:
+   INTERNAL_API_URL = https://${{Backend.RAILWAY_PUBLIC_DOMAIN}}
+
+Notes
+-----
+- Backend listens on process.env.PORT (Railway sets this automatically).
+- Playwright image is heavy; pick a plan with enough RAM/CPU.
+- Never commit real API keys; set secrets only in Railway Variables.

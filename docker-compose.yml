@@ -1,0 +1,62 @@
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: "12345678"
+      MYSQL_DATABASE: fold_watch
+    # Host 3306 is often taken by local MySQL; use 3307 on host to inspect DB from your machine
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "127.0.0.1",
+          "-uroot",
+          "-p12345678",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    ports:
+      - "3001:3001"
+    env_file:
+      - apps/backend/.env
+    environment:
+      PORT: "3001"
+      DATABASE_HOST: mysql
+      DATABASE_PORT: "3306"
+      DATABASE_NAME: fold_watch
+      DATABASE_USER: root
+      DATABASE_PASS: "12345678"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    init: true
+    ipc: host
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      INTERNAL_API_URL: http://backend:3001
+    depends_on:
+      - backend
+    init: true
+
+volumes:
+  mysql_data:

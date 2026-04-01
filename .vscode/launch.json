@@ -1,0 +1,54 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Backend (Nest)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/apps/backend",
+      "runtimeExecutable": "${env:HOME}/.nvm/versions/node/v22.20.0/bin/node",
+      "args": [
+        "${workspaceFolder}/apps/backend/node_modules/@nestjs/cli/bin/nest.js",
+        "start",
+        "--debug",
+        "--watch"
+      ],
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "restart": true,
+      "sourceMaps": true,
+      "outFiles": ["${workspaceFolder}/apps/backend/dist/**/*.js"],
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      "name": "Attach to Backend (port 9229)",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "restart": true,
+      "sourceMaps": true,
+      "outFiles": ["${workspaceFolder}/apps/backend/dist/**/*.js"],
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      "name": "Debug Frontend (Next.js)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/apps/frontend",
+      "runtimeExecutable": "${env:HOME}/.nvm/versions/node/v22.20.0/bin/node",
+      "runtimeArgs": ["--inspect=9230"],
+      "program": "${workspaceFolder}/apps/frontend/node_modules/next/dist/bin/next",
+      "args": ["dev"],
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug Backend + Frontend",
+      "configurations": ["Debug Backend (Nest)", "Debug Frontend (Next.js)"],
+      "stopAll": true
+    }
+  ]
+}
