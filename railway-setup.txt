@@ -4,18 +4,18 @@ Foldwatch on Railway — quick checklist
 Architecture: MySQL (Railway) + Backend (Docker) + Frontend (Docker).
 Repo root must stay the build context (do NOT set Root Directory to apps/*).
 
---- Fix "Build failed" on your GitHub service (e.g. foldwatch) ---
-There is NO Dockerfile at repo root. On that service open Variables and ADD:
+--- Fix "Build failed" / Railpack "No start command" ---
+Railway used Railpack because it saw Node + pnpm but no root Dockerfile.
+The repo now has Dockerfile -> docker/backend.Dockerfile (symlink) so the DEFAULT
+GitHub service builds with Docker (Nest + Playwright image), not Railpack.
 
-  RAILWAY_DOCKERFILE_PATH = docker/backend.Dockerfile
-
-Redeploy. (Backend API only until you add a second service for the UI.)
+For a second service (Next.js frontend), set in THAT service only:
+  RAILWAY_DOCKERFILE_PATH = docker/frontend.Dockerfile
+Otherwise it would use the root Dockerfile (backend).
 
 --- Use Railway MySQL from your Variables tab (reference syntax) ---
 On the BACKEND app service (not on MySQL), add these. Replace MySQL with the
 EXACT tile name of your database on the canvas if it differs (e.g. MySQL).
-
-  RAILWAY_DOCKERFILE_PATH = docker/backend.Dockerfile
 
   DATABASE_HOST     = ${{MySQL.MYSQLHOST}}
   DATABASE_PORT     = ${{MySQL.MYSQLPORT}}
