@@ -1,3 +1,6 @@
+# Old nested frontend repo (backup after merging into monorepo)
+apps/frontend/.git.nested-backup/
+
 node_modules/
 dist/
 .next/
