@@ -43,6 +43,43 @@ service name (rename in the file if yours differs, then re-import or edit in UI)
    then add INTERNAL_API_URL + Generate Domain.
 4) Generate Domain on backend if you need a public API URL.
 
+--- Same thing from the terminal (Railway CLI) ---
+Prereq: `railway login` — https://docs.railway.com/cli
+
+From this repo root, link the project + service (names/IDs from dashboard URL):
+
+  railway link -p <PROJECT_ID> -s <BACKEND_SERVICE_NAME>
+
+Apply backend vars from the template (preserves ${{MySQL…}} syntax):
+
+  ./scripts/railway-import-env.sh <BACKEND_SERVICE_NAME> .env.railway.backend
+
+Set a secret without shell quoting issues:
+
+  printf '%s' 'YOUR_GEMINI_KEY' | railway variable set GEMINI_API_KEY --stdin -s <BACKEND_SERVICE_NAME>
+
+Redeploy that service:
+
+  railway redeploy -s <BACKEND_SERVICE_NAME>
+
+Public Railway domain (max one free domain per service):
+
+  railway domain -s <BACKEND_SERVICE_NAME>
+  railway domain -s <FRONTEND_SERVICE_NAME>
+
+Frontend env (after you create a second GitHub service for the UI):
+
+  railway link -p <PROJECT_ID> -s <FRONTEND_SERVICE_NAME>
+  ./scripts/railway-import-env.sh <FRONTEND_SERVICE_NAME> .env.railway.frontend
+
+CI / headless: create a Project Token in Railway, then:
+
+  RAILWAY_TOKEN=... railway variable set ...
+
+Limitation: the “Config file path” = /apps/frontend/railway.json is not available in the
+public CLI last we checked — set that once in the dashboard for the frontend service, or
+the frontend service will keep using root railway.json (backend image).
+
 Notes
 -----
 - Backend listens on process.env.PORT (Railway sets this automatically).
