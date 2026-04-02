@@ -303,7 +303,7 @@ export default function ComparePage() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <History className="h-4 w-4" />
-            Past analyses
+            Past analyses *
           </CardTitle>
           <p className="text-sm text-muted-foreground font-normal">
             Open a saved LLM comparison run from history.
