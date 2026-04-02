@@ -277,6 +277,40 @@ export interface DashboardStats {
   ai_provider: string;
 }
 
+export interface SourceAnalyticsChurnPoint {
+  at: string;
+  total_stories: number;
+  new_count: number;
+  removed_count: number;
+}
+
+export interface SourceAnalyticsFreshnessPoint {
+  at: string;
+  score: number;
+}
+
+export interface SourceAnalyticsSourceMetrics {
+  source_id: string;
+  source_name: string;
+  avg_tenure_minutes: number;
+  median_tenure_minutes: number;
+  total_stories_tracked: number;
+  tenure_label: string;
+  churn_series: SourceAnalyticsChurnPoint[];
+  avg_new_per_crawl: number;
+  avg_removed_per_crawl: number;
+  churn_rate: number;
+  freshness_series: SourceAnalyticsFreshnessPoint[];
+  avg_freshness: number;
+  update_count: number;
+  fold_updates_per_day: number;
+}
+
+export interface SourceAnalyticsResponse {
+  window_hours: number | null;
+  sources: SourceAnalyticsSourceMetrics[];
+}
+
 export interface SchedulerStatus {
   enabled: boolean;
 }

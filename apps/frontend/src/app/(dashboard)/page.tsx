@@ -4,7 +4,9 @@ import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatsCards } from '@/components/dashboard/stats-cards';
+import { PerSourceFreshnessCards } from '@/components/dashboard/per-source-freshness-cards';
 import { RecencyChart } from '@/components/dashboard/recency-chart';
+import { SourceAnalytics } from '@/components/dashboard/source-analytics';
 import { AgentRunTimeline } from '@/components/dashboard/agent-run-timeline';
 import { api } from '@/lib/api';
 import type { DashboardStats, Snapshot, AgentRun } from '@/lib/api';
@@ -60,6 +62,15 @@ export default function OverviewPage() {
 
       {stats && <StatsCards stats={stats} />}
 
+      {stats && snapshots.length > 0 && (
+        <div className="space-y-2">
+          <h2 className="text-sm font-medium text-muted-foreground">
+            Freshness by source
+          </h2>
+          <PerSourceFreshnessCards snapshots={snapshots} stats={stats} />
+        </div>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle>Source Freshness</CardTitle>
@@ -74,6 +85,8 @@ export default function OverviewPage() {
           )}
         </CardContent>
       </Card>
+
+      <SourceAnalytics snapshots={snapshots} />
 
       <Card>
         <CardHeader>

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, MoreThanOrEqual } from 'typeorm';
+import { Repository, In, MoreThanOrEqual, LessThan } from 'typeorm';
 import { Snapshot } from './entities/snapshot.entity';
 import { StoryFoldPresence } from './entities/story-fold-presence.entity';
 
@@ -74,6 +74,60 @@ export interface PublishingVelocityResponse {
     estimated_new_per_hour_b: number;
     faster_by_estimated_hourly_rate: string | null;
   };
+}
+
+export interface SourceAnalyticsChurnPoint {
+  at: string;
+  total_stories: number;
+  new_count: number;
+  removed_count: number;
+}
+
+export interface SourceAnalyticsFreshnessPoint {
+  at: string;
+  score: number;
+}
+
+export interface SourceAnalyticsSourceMetrics {
+  source_id: string;
+  source_name: string;
+  avg_tenure_minutes: number;
+  median_tenure_minutes: number;
+  total_stories_tracked: number;
+  tenure_label: string;
+  churn_series: SourceAnalyticsChurnPoint[];
+  avg_new_per_crawl: number;
+  avg_removed_per_crawl: number;
+  churn_rate: number;
+  freshness_series: SourceAnalyticsFreshnessPoint[];
+  avg_freshness: number;
+  update_count: number;
+  fold_updates_per_day: number;
+}
+
+export interface SourceAnalyticsResponse {
+  window_hours: number | null;
+  sources: SourceAnalyticsSourceMetrics[];
+}
+
+function medianSorted(sorted: number[]): number {
+  if (sorted.length === 0) return 0;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2
+    ? sorted[mid]
+    : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function formatTenureLabel(avgMinutes: number): string {
+  if (!Number.isFinite(avgMinutes) || avgMinutes <= 0) {
+    return '—';
+  }
+  if (avgMinutes < 60) {
+    return `${Math.round(avgMinutes)}m / story`;
+  }
+  const h = Math.floor(avgMinutes / 60);
+  const m = Math.round(avgMinutes % 60);
+  return m > 0 ? `${h}h ${m}m / story` : `${h}h / story`;
 }
 
 @Injectable()
@@ -461,5 +515,193 @@ export class SnapshotsService implements OnModuleInit {
       freshest: compare[0] || null,
       stalest: compare[compare.length - 1] || null,
     };
+  }
+
+  /**
+   * Per-source tenure (story_fold_presence), churn (consecutive snapshot diffs),
+   * and freshness time series for analytics UI.
+   */
+  async getSourceAnalytics(
+    sourceIds: string[],
+    windowHours?: number | null,
+  ): Promise<SourceAnalyticsResponse> {
+    if (!sourceIds.length) {
+      return { window_hours: windowHours ?? null, sources: [] };
+    }
+
+    const hasWindow =
+      windowHours != null && windowHours > 0 && Number.isFinite(windowHours);
+    const windowStart = hasWindow
+      ? new Date(Date.now() - windowHours! * 3600_000)
+      : null;
+    const windowHoursOut: number | null = hasWindow ? windowHours! : null;
+
+    const presenceRows = await this.presenceRepo.find({
+      where: {
+        source_id: In(sourceIds),
+        ...(windowStart
+          ? { first_seen_at: MoreThanOrEqual(windowStart) }
+          : {}),
+      },
+    });
+
+    const tenureBySource = new Map<
+      string,
+      { minutes: number[]; name: string }
+    >();
+    for (const sid of sourceIds) {
+      tenureBySource.set(sid, { minutes: [], name: 'Unknown' });
+    }
+    for (const row of presenceRows) {
+      const bucket = tenureBySource.get(row.source_id);
+      if (!bucket) continue;
+      const ms =
+        row.last_seen_at.getTime() - row.first_seen_at.getTime();
+      if (ms >= 0) {
+        bucket.minutes.push(ms / 60_000);
+      }
+    }
+
+    const MAX_SNAPSHOTS = 2000;
+    const sources: SourceAnalyticsSourceMetrics[] = [];
+
+    for (const sid of sourceIds) {
+      const beforeWindow = windowStart
+        ? await this.repo.findOne({
+            where: { source_id: sid, created_at: LessThan(windowStart) },
+            order: { created_at: 'DESC' },
+            relations: ['source'],
+          })
+        : null;
+
+      const rows = await this.repo.find({
+        where: {
+          source_id: sid,
+          ...(windowStart
+            ? { created_at: MoreThanOrEqual(windowStart) }
+            : {}),
+        },
+        order: { created_at: 'ASC' },
+        take: MAX_SNAPSHOTS,
+        relations: ['source'],
+      });
+
+      const sourceName =
+        rows[0]?.source?.name ||
+        beforeWindow?.source?.name ||
+        'Unknown';
+
+      const tBucket = tenureBySource.get(sid)!;
+      tBucket.name = sourceName;
+      const tenures = tBucket.minutes.slice().sort((a, b) => a - b);
+      const avgTen =
+        tenures.length > 0
+          ? tenures.reduce((a, b) => a + b, 0) / tenures.length
+          : 0;
+      const medTen = medianSorted(tenures);
+
+      const chain: Snapshot[] = [];
+      if (beforeWindow) chain.push(beforeWindow);
+      chain.push(...rows);
+
+      const churnSeries: SourceAnalyticsChurnPoint[] = [];
+      let prev: Snapshot | null = null;
+      for (const curr of chain) {
+        if (!prev) {
+          prev = curr;
+          continue;
+        }
+        const prevStories = Array.isArray(prev.stories) ? prev.stories : [];
+        const currStories = Array.isArray(curr.stories) ? curr.stories : [];
+        const prevKeys = new Set(prevStories.map((s) => this.storyKey(s)));
+        const currKeys = new Set(currStories.map((s) => this.storyKey(s)));
+        let removed = 0;
+        for (const k of prevKeys) {
+          if (!currKeys.has(k)) removed += 1;
+        }
+        const newCount = Array.isArray(curr.new_stories)
+          ? curr.new_stories.length
+          : 0;
+        if (curr.created_at >= (windowStart ?? new Date(0))) {
+          churnSeries.push({
+            at: curr.created_at.toISOString(),
+            total_stories: currStories.length,
+            new_count: newCount,
+            removed_count: removed,
+          });
+        }
+        prev = curr;
+      }
+
+      const nPoints = churnSeries.length;
+      const avgNew = nPoints
+        ? churnSeries.reduce((a, p) => a + p.new_count, 0) / nPoints
+        : 0;
+      const avgRem = nPoints
+        ? churnSeries.reduce((a, p) => a + p.removed_count, 0) / nPoints
+        : 0;
+      let churnRateSum = 0;
+      let churnRateN = 0;
+      for (const p of churnSeries) {
+        const denom = Math.max(1, p.total_stories);
+        churnRateSum += (p.new_count + p.removed_count) / denom;
+        churnRateN += 1;
+      }
+      const churnRate =
+        churnRateN > 0 ? churnRateSum / churnRateN : 0;
+
+      const freshnessSeries: SourceAnalyticsFreshnessPoint[] = rows.map(
+        (r) => {
+          const s = this.recomputeFreshness(
+            Object.assign(new Snapshot(), r),
+          );
+          return {
+            at: r.created_at.toISOString(),
+            score: s.freshness_score ?? 0,
+          };
+        },
+      );
+      const scores = freshnessSeries.map((f) => f.score);
+      const avgFresh =
+        scores.length > 0
+          ? Math.round(
+              (scores.reduce((a, b) => a + b, 0) / scores.length) * 10000,
+            ) / 10000
+          : 0;
+
+      const updateCount = rows.length;
+      let spanMs = 1;
+      if (rows.length >= 2) {
+        spanMs =
+          rows[rows.length - 1].created_at.getTime() -
+          rows[0].created_at.getTime();
+      } else if (hasWindow && windowStart) {
+        spanMs = Date.now() - windowStart.getTime();
+      } else if (rows.length === 1) {
+        spanMs = 24 * 3600_000;
+      }
+      const spanDays = Math.max(spanMs / (24 * 3600_000), 1 / 24);
+      const foldUpdatesPerDay = updateCount / spanDays;
+
+      sources.push({
+        source_id: sid,
+        source_name: sourceName,
+        avg_tenure_minutes: Math.round(avgTen * 1000) / 1000,
+        median_tenure_minutes: Math.round(medTen * 1000) / 1000,
+        total_stories_tracked: tenures.length,
+        tenure_label: formatTenureLabel(avgTen),
+        churn_series: churnSeries,
+        avg_new_per_crawl: Math.round(avgNew * 1000) / 1000,
+        avg_removed_per_crawl: Math.round(avgRem * 1000) / 1000,
+        churn_rate: Math.round(churnRate * 10000) / 10000,
+        freshness_series: freshnessSeries,
+        avg_freshness: avgFresh,
+        update_count: updateCount,
+        fold_updates_per_day:
+          Math.round(foldUpdatesPerDay * 1000) / 1000,
+      });
+    }
+
+    return { window_hours: windowHoursOut, sources };
   }
 }

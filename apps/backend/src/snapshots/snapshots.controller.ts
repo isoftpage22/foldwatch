@@ -85,6 +85,23 @@ export class SnapshotsController implements OnModuleInit {
     return ok(data);
   }
 
+  @Get('source-analytics')
+  @Header('Cache-Control', 'no-store')
+  async sourceAnalytics(
+    @Query('source_ids') raw?: string,
+    @Query('window_hours') windowHours?: string,
+  ) {
+    const ids = (raw || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const wh = windowHours !== undefined ? parseInt(windowHours, 10) : undefined;
+    const windowArg =
+      wh === undefined || Number.isNaN(wh) || wh <= 0 ? null : wh;
+    const data = await this.snapshotsService.getSourceAnalytics(ids, windowArg);
+    return ok(data);
+  }
+
   @Get(':sourceId/history')
   async history(
     @Param('sourceId') sourceId: string,
