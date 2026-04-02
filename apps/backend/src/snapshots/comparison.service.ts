@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SnapshotsService } from './snapshots.service';
-import { AiProvider } from '../agent/providers/ai-provider.interface';
 import { createAiProvider } from '../agent/providers/provider.factory';
 import { Snapshot } from './entities/snapshot.entity';
 import { ComparisonResult } from './entities/comparison-result.entity';
@@ -72,16 +71,13 @@ export interface ComparisonAnalysis {
 @Injectable()
 export class ComparisonService {
   private readonly logger = new Logger(ComparisonService.name);
-  private readonly aiProvider: AiProvider;
 
   constructor(
     private readonly config: ConfigService,
     private readonly snapshotsService: SnapshotsService,
     @InjectRepository(ComparisonResult)
     private readonly comparisonRepo: Repository<ComparisonResult>,
-  ) {
-    this.aiProvider = createAiProvider(this.config);
-  }
+  ) {}
 
   async analyze(
     sourceIds: string[],
@@ -101,7 +97,8 @@ export class ComparisonService {
 
     const prompt = await this.buildPrompt(snapshots);
 
-    const response = await this.aiProvider.startConversation(
+    const aiProvider = createAiProvider(this.config);
+    const response = await aiProvider.startConversation(
       this.systemPrompt(),
       prompt,
       [],

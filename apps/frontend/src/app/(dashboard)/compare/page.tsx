@@ -16,7 +16,7 @@ import type {
   ComparisonRecord,
   ComparisonAnalysis,
 } from '@/lib/api';
-import { Loader2, History, Eye, RefreshCw } from 'lucide-react';
+import { Loader2, History, Eye, RefreshCw, Sparkles } from 'lucide-react';
 
 type SortKey = 'freshness' | 'name' | 'modified';
 const MAX_SELECTION = 3;
@@ -37,6 +37,10 @@ export default function ComparePage() {
   const [viewingHistoryId, setViewingHistoryId] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<ComparisonAnalysis | null>(null);
   const [compareRefreshing, setCompareRefreshing] = useState(false);
+  const [liveAnalysisLoading, setLiveAnalysisLoading] = useState(false);
+  const [liveAnalysisError, setLiveAnalysisError] = useState<string | null>(
+    null,
+  );
 
   const fetchCompareSnapshots = useCallback(async () => {
     const res = await api.get<Snapshot[]>(
@@ -131,6 +135,7 @@ export default function ComparePage() {
   const toggleSource = (sourceId: string) => {
     setAnalysis(null);
     setViewingHistoryId(null);
+    setLiveAnalysisError(null);
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(sourceId)) {
@@ -144,6 +149,7 @@ export default function ComparePage() {
 
   async function handleViewHistory(id: string) {
     setLoadingHistoryId(id);
+    setLiveAnalysisError(null);
     try {
       const res = await api.get<ComparisonRecord>(
         `/snapshots/compare-analysis/${id}`,
@@ -157,6 +163,42 @@ export default function ComparePage() {
       // keep prior state
     } finally {
       setLoadingHistoryId(null);
+    }
+  }
+
+  async function runLiveAiAnalysis() {
+    if (selected.size < 2 || selected.size > MAX_SELECTION) return;
+    setLiveAnalysisLoading(true);
+    setLiveAnalysisError(null);
+    setViewingHistoryId(null);
+    try {
+      const res = await api.post<{
+        analysis: ComparisonAnalysis;
+        record_id: string;
+      }>('/snapshots/compare-analysis', {
+        source_ids: Array.from(selected),
+      });
+      if (res.data?.analysis && typeof res.data.analysis === 'object') {
+        setAnalysis(res.data.analysis as ComparisonAnalysis);
+      } else {
+        setAnalysis(null);
+        setLiveAnalysisError('No analysis in response');
+      }
+      try {
+        const hist = await api.get<ComparisonRecord[]>(
+          '/snapshots/compare-history',
+        );
+        setHistory(Array.isArray(hist.data) ? hist.data : []);
+      } catch {
+        // history refresh optional
+      }
+    } catch (e) {
+      setAnalysis(null);
+      setLiveAnalysisError(
+        e instanceof Error ? e.message : 'AI comparison failed',
+      );
+    } finally {
+      setLiveAnalysisLoading(false);
     }
   }
 
@@ -272,11 +314,52 @@ export default function ComparePage() {
       )}
 
       {selected.size >= 2 && (
-        <CompareSourcesDetail
-          snapshots={selectedSnapshots}
-          velocity={velocity24}
-          velocityLoading={velocityLoading}
-        />
+        <>
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3">
+            <div className="flex-1 min-w-[200px]">
+              <p className="text-sm font-medium">AI comparison</p>
+              <p className="text-xs text-muted-foreground">
+                Run the LLM on your selection to see matched stories
+                (article-by-article), keywords, freshness ranking, and verdict —
+                same panels as saved history.
+              </p>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              className="gap-2 shrink-0"
+              disabled={liveAnalysisLoading}
+              onClick={() => void runLiveAiAnalysis()}
+            >
+              {liveAnalysisLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="h-4 w-4" />
+              )}
+              {liveAnalysisLoading ? 'Analyzing…' : 'Run AI comparison'}
+            </Button>
+          </div>
+          {liveAnalysisError && (
+            <p className="text-sm text-destructive">{liveAnalysisError}</p>
+          )}
+          <CompareSourcesDetail
+            snapshots={selectedSnapshots}
+            velocity={velocity24}
+            velocityLoading={velocityLoading}
+          />
+          {analysis && !viewingHistoryId && (
+            <div className="space-y-3 rounded-lg border bg-card p-4">
+              <p className="text-sm text-muted-foreground">
+                AI analysis for the {selected.size} sources currently selected.
+                Change selection or run again to refresh.
+              </p>
+              <AnalysisPanel
+                analysis={analysis}
+                snapshots={selectedSnapshots}
+              />
+            </div>
+          )}
+        </>
       )}
 
       {selected.size === 1 && (
@@ -286,7 +369,7 @@ export default function ComparePage() {
         </p>
       )}
 
-      {viewingHistoryId && analysis && (
+      {analysis && viewingHistoryId && (
         <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/80 dark:bg-amber-950/20 dark:border-amber-900 p-4">
           <p className="text-sm text-amber-900 dark:text-amber-100">
             Showing saved AI analysis from{' '}
@@ -295,7 +378,10 @@ export default function ComparePage() {
             ).toLocaleString()}
             . Selecting a source above clears this view.
           </p>
-          <AnalysisPanel analysis={analysis} />
+          <AnalysisPanel
+            analysis={analysis}
+            snapshots={viewingHistoryId ? snapshots : selectedSnapshots}
+          />
         </div>
       )}
 
@@ -305,8 +391,9 @@ export default function ComparePage() {
             <History className="h-4 w-4" />
             Past analyses *
           </CardTitle>
-          <p className="text-sm text-muted-foreground font-normal">
-            Open a saved LLM comparison run from history.
+            <p className="text-sm text-muted-foreground font-normal">
+            Open a saved LLM comparison run from history (same as &quot;Run AI
+            comparison&quot; above).
           </p>
         </CardHeader>
         <CardContent>
@@ -317,8 +404,8 @@ export default function ComparePage() {
             </div>
           ) : history.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No saved analyses yet. Run a comparison from the API or a future
-              “Analyze” action to build history.
+              No saved analyses yet. Use &quot;Run AI comparison&quot; above with
+              2–3 sources selected.
             </p>
           ) : (
             <ul className="space-y-2">

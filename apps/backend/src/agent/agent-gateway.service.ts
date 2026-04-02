@@ -7,11 +7,7 @@ import { AlertTool } from './tools/alert.tool';
 import { AgentRunsService } from '../agent-runs/agent-runs.service';
 import { Source } from '../sources/entities/source.entity';
 import { AgentResultDto } from './dto/agent-result.dto';
-import {
-  AiProvider,
-  ToolDefinition,
-  ToolResult,
-} from './providers/ai-provider.interface';
+import { ToolDefinition, ToolResult } from './providers/ai-provider.interface';
 import { createAiProvider } from './providers/provider.factory';
 
 type CrawlPayload = {
@@ -29,7 +25,6 @@ type CrawlPayload = {
 export class AgentGatewayService {
   private readonly logger = new Logger(AgentGatewayService.name);
   private readonly MAX_STEPS: number;
-  private readonly aiProvider: AiProvider;
   private readonly abortedRuns = new Set<string>();
   /** Per agent run id: last successful crawl_url output per source_id (LLM may drop stories on save). */
   private readonly crawlCachesByRunId = new Map<string, Map<string, CrawlPayload>>();
@@ -43,9 +38,10 @@ export class AgentGatewayService {
     private readonly agentRunsService: AgentRunsService,
   ) {
     this.MAX_STEPS = this.config.get<number>('crawl.maxAgentSteps') || 15;
-    this.aiProvider = createAiProvider(this.config);
+    const providerType =
+      (this.config.get<string>('ai.provider') as string) || 'gemini';
     this.logger.log(
-      `Agent gateway initialized with provider: ${this.aiProvider.providerName}`,
+      `Agent gateway initialized (AI_PROVIDER=${providerType}). A fresh provider is created per run so concurrent crawls do not share chat state.`,
     );
   }
 
@@ -63,10 +59,11 @@ export class AgentGatewayService {
     const sourcesSummary = sources
       .map((s) => `${s.name} (${s.url})`)
       .join(', ');
+    const aiProvider = createAiProvider(this.config);
     this.logger.log(
-      `Starting agent run ${run.id} for ${sources.length} sources: [${sourcesSummary}] (provider: ${this.aiProvider.providerName})`,
+      `Starting agent run ${run.id} for ${sources.length} sources: [${sourcesSummary}] (provider: ${aiProvider.providerName})`,
     );
-    
+
     const systemPrompt = `You are a web intelligence agent for FoldWatch.
 Your job is to crawl N website sources, extract their first-fold content (headline, summary, hero image), detect the most accurate publish/modified date, compute a freshness score, and store results.
 
@@ -87,7 +84,7 @@ Round to 4 decimal places.`;
 
     this.crawlCachesByRunId.set(run.id, new Map());
     try {
-      let response = await this.aiProvider.startConversation(
+      let response = await aiProvider.startConversation(
         systemPrompt,
         userMessage,
         this.getToolDefinitions(),
@@ -167,8 +164,19 @@ Round to 4 decimal places.`;
             });
           }
 
-          response =
-            await this.aiProvider.continueWithToolResults(toolResults);
+          // Ensure we have the same number of tool results as tool calls for OpenAI
+          if (toolResults.length !== response.toolCalls.length) {
+            this.logger.error(
+              `Tool results count mismatch: ${toolResults.length} results vs ${response.toolCalls.length} calls`,
+            );
+            await this.agentRunsService.fail(
+              run.id,
+              'Tool results count mismatch with tool calls',
+            );
+            break;
+          }
+
+          response = await aiProvider.continueWithToolResults(toolResults);
         } else {
           await this.agentRunsService.fail(
             run.id,

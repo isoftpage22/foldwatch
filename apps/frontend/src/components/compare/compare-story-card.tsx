@@ -34,7 +34,12 @@ export function CompareStoryCard({
   const [iconOk, setIconOk] = useState(Boolean(iconSrc));
 
   const tenure = onFoldSinceLabel(story.first_seen_at, snapshot.created_at);
-  const sourceUpdated = sourceUpdatedLabel(story.source_updated_at);
+  const sourceTimeIso =
+    story.source_updated_at ??
+    snapshot.modified_at ??
+    snapshot.published_at ??
+    null;
+  const sourceUpdated = sourceUpdatedLabel(sourceTimeIso);
 
   return (
     <Card className="overflow-hidden border shadow-sm hover:shadow-md transition-shadow">

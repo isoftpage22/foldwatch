@@ -6,6 +6,7 @@ import {
   ToolResult,
   ToolCall,
 } from './ai-provider.interface';
+import { Logger } from '@nestjs/common';
 
 export class OpenAiProvider implements AiProvider {
   readonly providerName = 'openai';
@@ -13,6 +14,7 @@ export class OpenAiProvider implements AiProvider {
   private readonly model: string;
   private messages: OpenAI.Chat.ChatCompletionMessageParam[] = [];
   private openaiTools: OpenAI.Chat.ChatCompletionTool[] = [];
+  private readonly logger = new Logger(OpenAiProvider.name);
 
   constructor(apiKey: string, model?: string) {
     this.client = new OpenAI({ apiKey });
@@ -36,6 +38,7 @@ export class OpenAiProvider implements AiProvider {
   async continueWithToolResults(
     toolResults: ToolResult[],
   ): Promise<AgentTurnResult> {
+    // OpenAI requires a tool response for every tool_call_id
     for (const tr of toolResults) {
       this.messages.push({
         role: 'tool',
@@ -48,41 +51,49 @@ export class OpenAiProvider implements AiProvider {
   }
 
   private async send(): Promise<AgentTurnResult> {
-    const response = await this.client.chat.completions.create({
-      model: this.model,
-      tools: this.openaiTools,
-      messages: this.messages,
-    });
+    try {
+      const response = await this.client.chat.completions.create({
+        model: this.model,
+        tools: this.openaiTools,
+        messages: this.messages,
+      });
 
-    const choice = response.choices[0];
-    if (!choice) {
-      return { textContent: '', toolCalls: [], done: true, tokensUsed: 0 };
+      const choice = response.choices[0];
+      if (!choice) {
+        return { textContent: '', toolCalls: [], done: true, tokensUsed: 0 };
+      }
+
+      const textContent = choice.message.content || '';
+
+      const rawCalls = choice.message.tool_calls || [];
+      // Parse before mutating this.messages so invalid JSON does not leave an
+      // assistant message with tool_calls but no following tool results.
+      const toolCalls: ToolCall[] = rawCalls
+        .filter(
+          (tc): tc is OpenAI.Chat.ChatCompletionMessageFunctionToolCall =>
+            tc.type === 'function',
+        )
+        .map((tc) => ({
+          id: tc.id,
+          name: tc.function.name,
+          input: JSON.parse(tc.function.arguments || '{}'),
+        }));
+
+      this.messages.push(choice.message);
+
+      const tokensUsed =
+        (response.usage?.prompt_tokens || 0) +
+        (response.usage?.completion_tokens || 0);
+
+      const hasToolCalls = (choice.message.tool_calls?.length ?? 0) > 0;
+      const done = !hasToolCalls;
+
+      return { textContent, toolCalls, done, tokensUsed };
+    } catch (error) {
+      this.logger.error('OpenAI API error:', error);
+      // Re-throw to let the agent gateway handle the failure
+      throw error;
     }
-
-    this.messages.push(choice.message);
-
-    const textContent = choice.message.content || '';
-
-    const rawCalls = choice.message.tool_calls || [];
-    const toolCalls: ToolCall[] = rawCalls
-      .filter(
-        (tc): tc is OpenAI.Chat.ChatCompletionMessageFunctionToolCall =>
-          tc.type === 'function',
-      )
-      .map((tc) => ({
-        id: tc.id,
-        name: tc.function.name,
-        input: JSON.parse(tc.function.arguments || '{}'),
-      }));
-
-    const tokensUsed =
-      (response.usage?.prompt_tokens || 0) +
-      (response.usage?.completion_tokens || 0);
-
-    const hasToolCalls = (choice.message.tool_calls?.length ?? 0) > 0;
-    const done = !hasToolCalls;
-
-    return { textContent, toolCalls, done, tokensUsed };
   }
 
   private convertTools(tools: ToolDefinition[]): OpenAI.Chat.ChatCompletionTool[] {
