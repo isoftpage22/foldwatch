@@ -365,7 +365,7 @@ export default function ComparePage() {
       {selected.size === 1 && (
         <p className="text-sm text-muted-foreground text-center py-6 border rounded-lg bg-muted/20">
           Select at least one more source to open the comparison (new stories,
-          change frequency, and story cards).
+          change frequency, and story cards *).
         </p>
       )}
 
@@ -376,7 +376,7 @@ export default function ComparePage() {
             {new Date(
               history.find((h) => h.id === viewingHistoryId)?.created_at || 0,
             ).toLocaleString()}
-            . Selecting a source above clears this view.
+            . Selecting a source above clears this view .
           </p>
           <AnalysisPanel
             analysis={analysis}
