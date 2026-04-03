@@ -133,6 +133,20 @@ export class SnapshotsController implements OnModuleInit {
     return ok(data);
   }
 
+  @Get('overview-window-stats')
+  @Header('Cache-Control', 'no-store')
+  async overviewWindowStats(@Query('window_minutes') windowMinutes?: string) {
+    const wm = parseInt(windowMinutes || '', 10);
+    const MAX_WINDOW_MINUTES = 5_256_000;
+    if (!Number.isFinite(wm) || wm <= 0 || wm > MAX_WINDOW_MINUTES) {
+      throw new BadRequestException(
+        'window_minutes must be a positive number (up to ~10 years)',
+      );
+    }
+    const data = await this.snapshotsService.getOverviewWindowStats(wm);
+    return ok(data);
+  }
+
   @Get(':sourceId/history')
   async history(
     @Param('sourceId') sourceId: string,

@@ -58,10 +58,20 @@ function mergeFreshnessRows(sources: SourceAnalyticsSourceMetrics[]) {
     const row: Record<string, string | number | null> = { t };
     for (const s of sources) {
       const p = s.freshness_series.find((x) => x.at === t);
-      row[s.source_id] = p != null ? p.score : null;
+      row[s.source_id] = p != null ? p.new_stories : null;
     }
     return row;
   });
+}
+
+function maxNewStoriesInChart(sources: SourceAnalyticsSourceMetrics[]) {
+  let m = 1;
+  for (const s of sources) {
+    for (const p of s.freshness_series) {
+      if (p.new_stories > m) m = p.new_stories;
+    }
+  }
+  return m;
 }
 
 function tenureBarColor(minutes: number, maxMinutes: number): string {
@@ -122,12 +132,17 @@ export function SourceAnalytics({ snapshots }: { snapshots: Snapshot[] }) {
         minutes: s.avg_tenure_minutes,
         label: s.tenure_label,
         tracked: s.total_stories_tracked,
+        window_total_new_stories: s.window_total_new_stories,
       })),
     [sources],
   );
 
   const churnMerged = useMemo(() => mergeChurnRows(sources), [sources]);
   const freshMerged = useMemo(() => mergeFreshnessRows(sources), [sources]);
+  const maxNewStories = useMemo(
+    () => maxNewStoriesInChart(sources),
+    [sources],
+  );
 
   const updatesLeader = useMemo(() => {
     if (sources.length === 0) return null;
@@ -154,9 +169,8 @@ export function SourceAnalytics({ snapshots }: { snapshots: Snapshot[] }) {
           <div>
             <CardTitle className="text-lg">Source behavior analytics</CardTitle>
             <p className="text-sm text-muted-foreground font-normal mt-1">
-              Story tenure on fold, churn between crawls, and freshness over
-              time — per source. Window matches the global time range in the
-              header (<span className="font-medium text-foreground">{rangeLabel}</span>
+              Tenure, churn, and <span className="font-medium text-foreground">new stories on fold</span> from DB snapshots — per source. Window matches the header (
+              <span className="font-medium text-foreground">{rangeLabel}</span>
               ).
             </p>
           </div>
@@ -208,14 +222,35 @@ export function SourceAnalytics({ snapshots }: { snapshots: Snapshot[] }) {
                       tick={{ fontSize: 11 }}
                     />
                     <Tooltip
-                      formatter={(value) => [
-                        `${Number(value ?? 0).toFixed(1)} min avg`,
-                        'Tenure',
-                      ]}
-                      labelFormatter={(_, payload) =>
-                        (payload?.[0]?.payload as { label?: string })?.label ??
-                        ''
-                      }
+                      content={({ active, payload }) => {
+                        if (!active || !payload?.length) return null;
+                        const p = payload[0]?.payload as {
+                          name?: string;
+                          minutes?: number;
+                          label?: string;
+                          window_total_new_stories?: number;
+                        };
+                        return (
+                          <div className="rounded-md border bg-background px-3 py-2 text-xs shadow-md">
+                            <p className="font-medium">{p.name}</p>
+                            <p className="text-muted-foreground">{p.label}</p>
+                            <p className="mt-1">
+                              Avg tenure:{' '}
+                              <span className="font-medium tabular-nums">
+                                {Number(p.minutes ?? 0).toFixed(1)} min
+                              </span>
+                            </p>
+                            {p.window_total_new_stories != null && (
+                              <p className="mt-1">
+                                New stories (window):{' '}
+                                <span className="font-medium tabular-nums">
+                                  {p.window_total_new_stories}
+                                </span>
+                              </p>
+                            )}
+                          </div>
+                        );
+                      }}
                     />
                     <Bar dataKey="minutes" radius={[0, 4, 4, 0]} name="Avg tenure">
                       {tenureChartData.map((entry, index) => (
@@ -237,7 +272,8 @@ export function SourceAnalytics({ snapshots }: { snapshots: Snapshot[] }) {
                     <span className="font-medium">{s.source_name}</span>
                     <span className="text-muted-foreground">
                       {' '}
-                      — {s.tenure_label} ({s.total_stories_tracked} stories)
+                      — {s.tenure_label} 
+                      {/* ({s.total_stories_tracked} stories) */}
                     </span>
                   </div>
                 ))}
@@ -245,7 +281,7 @@ export function SourceAnalytics({ snapshots }: { snapshots: Snapshot[] }) {
             </section>
 
             {/* 2 — Churn */}
-            <section className="space-y-3">
+            {/* <section className="space-y-3">
               <h3 className="text-sm font-semibold">
                 2. Fold churn (new + removed stories per crawl)
               </h3>
@@ -267,7 +303,32 @@ export function SourceAnalytics({ snapshots }: { snapshots: Snapshot[] }) {
                     />
                     <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
                     <Tooltip
-                      labelFormatter={(v) => new Date(String(v)).toLocaleString()}
+                      content={({ active, label, payload }) => {
+                        if (!active || !label || !payload?.length) return null;
+                        const t = String(label);
+                        return (
+                          <div className="rounded-md border bg-background px-3 py-2 text-xs shadow-md">
+                            <p className="font-medium mb-1">
+                              {new Date(t).toLocaleString()}
+                            </p>
+                            <ul className="space-y-1">
+                              {payload.map((item) => {
+                                const sid = String(item.dataKey ?? '');
+                                const src = sources.find((s) => s.source_id === sid);
+                                const pt = src?.churn_series.find((x) => x.at === t);
+                                return (
+                                  <li key={sid} style={{ color: item.color }}>
+                                    <span className="font-medium">{item.name}</span>
+                                    {': '}
+                                    New stories {pt?.new_count ?? '—'} · Removed{' '}
+                                    {pt?.removed_count ?? '—'}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        );
+                      }}
                     />
                     <Legend />
                     {sources.map((s, i) => (
@@ -300,13 +361,16 @@ export function SourceAnalytics({ snapshots }: { snapshots: Snapshot[] }) {
                   </div>
                 ))}
               </div>
-            </section>
+            </section> */}
 
-            {/* 3 — Freshness */}
+            {/* 3 — New stories over time (DB) */}
             <section className="space-y-3">
               <h3 className="text-sm font-semibold">
-                3. Freshness score over time
+                2. New stories on fold over time
               </h3>
+              <p className="text-xs text-muted-foreground">
+                Per crawl: count of <span className="font-medium">new_stories</span> saved on each snapshot (vs previous crawl).
+              </p>
               <div className="h-[300px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={freshMerged} margin={{ left: 4, right: 8 }}>
@@ -323,15 +387,32 @@ export function SourceAnalytics({ snapshots }: { snapshots: Snapshot[] }) {
                         })
                       }
                     />
-                    <YAxis domain={[0, 1]} tick={{ fontSize: 11 }} />
+                    <YAxis
+                      domain={[0, Math.max(5, maxNewStories * 1.1)]}
+                      allowDecimals={false}
+                      tick={{ fontSize: 11 }}
+                    />
                     <Tooltip
-                      labelFormatter={(v) => new Date(String(v)).toLocaleString()}
-                      formatter={(v) => [
-                        v != null && typeof v === 'number'
-                          ? v.toFixed(4)
-                          : '—',
-                        'Freshness',
-                      ]}
+                      content={({ active, label, payload }) => {
+                        if (!active || !label || !payload?.length) return null;
+                        const t = String(label);
+                        return (
+                          <div className="rounded-md border bg-background px-3 py-2 text-xs shadow-md">
+                            <p className="font-medium mb-1">
+                              {new Date(t).toLocaleString()}
+                            </p>
+                            <ul className="space-y-1">
+                              {payload.map((item) => (
+                                <li key={String(item.dataKey)} style={{ color: item.color }}>
+                                  <span className="font-medium">{item.name}</span>
+                                  {': '}
+                                  New stories {item.value ?? '—'}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        );
+                      }}
                     />
                     <Legend />
                     {sources.map((s, i) => (
@@ -357,9 +438,15 @@ export function SourceAnalytics({ snapshots }: { snapshots: Snapshot[] }) {
                   >
                     <p className="font-medium">{s.source_name}</p>
                     <p className="text-muted-foreground">
-                      Avg freshness: {s.avg_freshness.toFixed(4)} · Crawls in
-                      window: {s.update_count} · ~{s.fold_updates_per_day.toFixed(1)}{' '}
-                      fold updates/day
+                      New stories (window):{' '}
+                      <span className="font-medium text-foreground">
+                        {s.window_total_new_stories}
+                      </span>
+                      {' · '}
+                      Avg per crawl: {s.avg_freshness.toFixed(2)} · Crawls:{' '}
+                      {s.update_count} 
+                      {/* · ~{s.fold_updates_per_day.toFixed(1)} fold
+                      updates/day */}
                     </p>
                   </div>
                 ))}

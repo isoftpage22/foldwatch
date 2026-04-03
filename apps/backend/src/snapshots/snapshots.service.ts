@@ -83,9 +83,10 @@ export interface SourceAnalyticsChurnPoint {
   removed_count: number;
 }
 
+/** Per crawl: new stories on fold at that snapshot (from DB `new_stories`). */
 export interface SourceAnalyticsFreshnessPoint {
   at: string;
-  score: number;
+  new_stories: number;
 }
 
 export interface SourceAnalyticsSourceMetrics {
@@ -99,8 +100,12 @@ export interface SourceAnalyticsSourceMetrics {
   avg_new_per_crawl: number;
   avg_removed_per_crawl: number;
   churn_rate: number;
+  /** New stories at each crawl time (DB-backed). */
   freshness_series: SourceAnalyticsFreshnessPoint[];
+  /** Mean new stories per crawl in the window. */
   avg_freshness: number;
+  /** Sum of new stories across crawls in the window (same as summing churn new_count). */
+  window_total_new_stories: number;
   update_count: number;
   fold_updates_per_day: number;
 }
@@ -129,6 +134,25 @@ export interface StoriesInWindowSourceRow {
 export interface StoriesInWindowResponse {
   window_minutes: number;
   sources: StoriesInWindowSourceRow[];
+}
+
+/** Overview “Freshness by source” row: activity in [now − window, now]. */
+export interface OverviewWindowSourceRow {
+  source_id: string;
+  source_name: string;
+  /** Snapshots (crawls) stored in this window */
+  snapshot_count: number;
+  /** Distinct fold stories whose first_seen_at falls in this window */
+  stories_first_seen_in_window: number;
+  /** Sum of `new_stories.length` over snapshots in this window (DB fold churn). */
+  window_total_new_stories: number;
+  modified_at: string | null;
+  freshness_score: number | null;
+}
+
+export interface OverviewWindowStatsResponse {
+  window_minutes: number;
+  sources: OverviewWindowSourceRow[];
 }
 
 function medianSorted(sorted: number[]): number {
@@ -382,7 +406,15 @@ export class SnapshotsService implements OnModuleInit {
 
     const sorted = snapshots
       .map((s) => this.recomputeFreshness(s))
-      .sort((a, b) => (b.freshness_score || 0) - (a.freshness_score || 0));
+      .sort((a, b) => {
+        const d = (b.freshness_score || 0) - (a.freshness_score || 0);
+        if (d !== 0) return d;
+        /** Tie-break: more recent page modified_at ranks higher */
+        return (
+          new Date(b.modified_at || 0).getTime() -
+          new Date(a.modified_at || 0).getTime()
+        );
+      });
 
     return Promise.all(sorted.map((s) => this.attachTenureToSnapshot(s)));
   }
@@ -672,22 +704,25 @@ export class SnapshotsService implements OnModuleInit {
         churnRateN > 0 ? churnRateSum / churnRateN : 0;
 
       const freshnessSeries: SourceAnalyticsFreshnessPoint[] = rows.map(
-        (r) => {
-          const s = this.recomputeFreshness(
-            Object.assign(new Snapshot(), r),
-          );
-          return {
-            at: r.created_at.toISOString(),
-            score: s.freshness_score ?? 0,
-          };
-        },
+        (r) => ({
+          at: r.created_at.toISOString(),
+          new_stories: Array.isArray(r.new_stories) ? r.new_stories.length : 0,
+        }),
       );
-      const scores = freshnessSeries.map((f) => f.score);
+      /** Sum of DB `new_stories` counts per snapshot in window (not only churn deltas). */
+      const windowTotalNew = rows.reduce(
+        (acc, r) =>
+          acc + (Array.isArray(r.new_stories) ? r.new_stories.length : 0),
+        0,
+      );
+      const newStoryCounts = freshnessSeries.map((f) => f.new_stories);
       const avgFresh =
-        scores.length > 0
+        newStoryCounts.length > 0
           ? Math.round(
-              (scores.reduce((a, b) => a + b, 0) / scores.length) * 10000,
-            ) / 10000
+              (newStoryCounts.reduce((a, b) => a + b, 0) /
+                newStoryCounts.length) *
+                1000,
+            ) / 1000
           : 0;
 
       const updateCount = rows.length;
@@ -717,6 +752,7 @@ export class SnapshotsService implements OnModuleInit {
         churn_rate: Math.round(churnRate * 10000) / 10000,
         freshness_series: freshnessSeries,
         avg_freshness: avgFresh,
+        window_total_new_stories: windowTotalNew,
         update_count: updateCount,
         fold_updates_per_day:
           Math.round(foldUpdatesPerDay * 1000) / 1000,
@@ -810,6 +846,57 @@ export class SnapshotsService implements OnModuleInit {
         ),
         new_in_window: stories.length,
         stories,
+      });
+    }
+
+    return { window_minutes: windowMinutes, sources };
+  }
+
+  /**
+   * Per-source crawl count and “stories first seen on fold” in the window,
+   * aligned with the global time-range selector on Overview.
+   */
+  async getOverviewWindowStats(
+    windowMinutes: number,
+  ): Promise<OverviewWindowStatsResponse> {
+    if (!Number.isFinite(windowMinutes) || windowMinutes <= 0) {
+      return { window_minutes: windowMinutes, sources: [] };
+    }
+
+    const windowStart = new Date(Date.now() - windowMinutes * 60_000);
+    const compare = await this.getCompare();
+    const sources: OverviewWindowSourceRow[] = [];
+
+    for (const snap of compare) {
+      const sid = snap.source_id;
+      const windowSnaps = await this.repo.find({
+        where: { source_id: sid, created_at: MoreThanOrEqual(windowStart) },
+        select: ['id', 'new_stories'],
+        order: { created_at: 'ASC' },
+      });
+      const snapshotCount = windowSnaps.length;
+      const windowTotalNew = windowSnaps.reduce(
+        (acc, r) =>
+          acc + (Array.isArray(r.new_stories) ? r.new_stories.length : 0),
+        0,
+      );
+      const storiesFirstSeen = await this.presenceRepo.count({
+        where: {
+          source_id: sid,
+          first_seen_at: MoreThanOrEqual(windowStart),
+        },
+      });
+
+      sources.push({
+        source_id: sid,
+        source_name: snap.source?.name ?? 'Unknown',
+        snapshot_count: snapshotCount,
+        stories_first_seen_in_window: storiesFirstSeen,
+        window_total_new_stories: windowTotalNew,
+        modified_at: snap.modified_at
+          ? new Date(snap.modified_at).toISOString()
+          : null,
+        freshness_score: snap.freshness_score ?? null,
       });
     }
 

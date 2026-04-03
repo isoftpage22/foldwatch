@@ -286,7 +286,8 @@ export interface SourceAnalyticsChurnPoint {
 
 export interface SourceAnalyticsFreshnessPoint {
   at: string;
-  score: number;
+  /** New stories on fold at this crawl (from DB). */
+  new_stories: number;
 }
 
 export interface SourceAnalyticsSourceMetrics {
@@ -301,7 +302,10 @@ export interface SourceAnalyticsSourceMetrics {
   avg_removed_per_crawl: number;
   churn_rate: number;
   freshness_series: SourceAnalyticsFreshnessPoint[];
+  /** Mean new stories per crawl in the window. */
   avg_freshness: number;
+  /** Sum of new stories across crawls in the window. */
+  window_total_new_stories: number;
   update_count: number;
   fold_updates_per_day: number;
 }
@@ -329,6 +333,22 @@ export interface StoriesInWindowSourceRow {
 export interface StoriesInWindowResponse {
   window_minutes: number;
   sources: StoriesInWindowSourceRow[];
+}
+
+export interface OverviewWindowSourceRow {
+  source_id: string;
+  source_name: string;
+  snapshot_count: number;
+  stories_first_seen_in_window: number;
+  /** Sum of new_stories counts over snapshots in window (DB). */
+  window_total_new_stories: number;
+  modified_at: string | null;
+  freshness_score: number | null;
+}
+
+export interface OverviewWindowStatsResponse {
+  window_minutes: number;
+  sources: OverviewWindowSourceRow[];
 }
 
 export interface SchedulerStatus {
