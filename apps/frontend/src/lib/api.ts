@@ -311,6 +311,26 @@ export interface SourceAnalyticsResponse {
   sources: SourceAnalyticsSourceMetrics[];
 }
 
+export interface StoryInWindowRow {
+  story_key: string;
+  title: string;
+  url?: string;
+  first_seen_at: string;
+}
+
+export interface StoriesInWindowSourceRow {
+  source_id: string;
+  source_name: string;
+  stories_on_fold: number;
+  new_in_window: number;
+  stories: StoryInWindowRow[];
+}
+
+export interface StoriesInWindowResponse {
+  window_minutes: number;
+  sources: StoriesInWindowSourceRow[];
+}
+
 export interface SchedulerStatus {
   enabled: boolean;
 }

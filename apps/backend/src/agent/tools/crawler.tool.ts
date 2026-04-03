@@ -193,6 +193,22 @@ export class CrawlerTool {
     return `${story.url || ''}::${story.title}`;
   }
 
+  /** When two candidates tie on timestamp, prefer visible body text over stale meta/JSON-LD. */
+  private static readonly DATE_SOURCE_PRIORITY: Record<string, number> = {
+    body_text: 100,
+    article_meta: 60,
+    og_updated: 55,
+    itemprop_dateModified: 54,
+    time_datetime: 53,
+    meta_last_modified: 52,
+    schema_org: 50,
+    schema_org_published: 40,
+  };
+
+  private dateSourceRank(source: string): number {
+    return CrawlerTool.DATE_SOURCE_PRIORITY[source] ?? 45;
+  }
+
   private async fetchStoryUpdatedAt(
     url: string,
   ): Promise<{ updatedAt: string; source: string } | null> {
@@ -208,12 +224,12 @@ export class CrawlerTool {
     const html = await res.text();
     const $ = cheerio.load(html);
 
-    const directMetaCandidates: Array<{ raw: string; source: string }> = [];
+    const rawCandidates: Array<{ raw: string; source: string }> = [];
     const collect = (selector: string, source: string) => {
       $(selector).each((_, el) => {
         const content = $(el).attr('content') || $(el).attr('datetime');
         if (content) {
-          directMetaCandidates.push({ raw: content, source });
+          rawCandidates.push({ raw: content, source });
         }
       });
     };
@@ -224,14 +240,8 @@ export class CrawlerTool {
     collect('meta[itemprop="dateModified"]', 'itemprop_dateModified');
     collect('time[datetime]', 'time_datetime');
 
-    const ldJsonCandidates = this.extractLdModifiedDates($);
-    for (const c of ldJsonCandidates) {
-      directMetaCandidates.push(c);
-    }
-
-    for (const c of directMetaCandidates) {
-      const parsed = this.parseDateText(c.raw);
-      if (parsed) return { updatedAt: parsed.toISOString(), source: c.source };
+    for (const c of this.extractLdModifiedDates($)) {
+      rawCandidates.push(c);
     }
 
     const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
@@ -244,12 +254,57 @@ export class CrawlerTool {
     for (const re of textualPatterns) {
       const m = bodyText.match(re);
       const raw = m?.[1]?.trim();
-      if (!raw) continue;
-      const parsed = this.parseDateText(raw);
-      if (parsed) return { updatedAt: parsed.toISOString(), source: 'body_text' };
+      if (raw) {
+        rawCandidates.push({ raw, source: 'body_text' });
+      }
     }
 
-    return null;
+    const now = Date.now();
+    const maxFutureSkewMs = 48 * 3_600_000;
+    type Scored = { at: Date; source: string; raw: string };
+    const parsed: Scored[] = [];
+
+    for (const c of rawCandidates) {
+      const d = this.parseDateText(c.raw);
+      if (!d || isNaN(d.getTime())) continue;
+      if (d.getFullYear() < 1990) continue;
+      parsed.push({ at: d, source: c.source, raw: c.raw });
+    }
+
+    const reasonable = parsed.filter((p) => p.at.getTime() <= now + maxFutureSkewMs);
+    const pool = reasonable.length > 0 ? reasonable : parsed;
+
+    if (pool.length === 0) {
+      this.logger.debug(
+        `fetchStoryUpdatedAt: no parseable dates for ${url} (raw candidates: ${rawCandidates.length})`,
+      );
+      return null;
+    }
+
+    let best = pool[0]!;
+    for (let i = 1; i < pool.length; i++) {
+      const cur = pool[i]!;
+      const dt = cur.at.getTime() - best.at.getTime();
+      if (dt > 0) {
+        best = cur;
+      } else if (dt === 0) {
+        if (this.dateSourceRank(cur.source) > this.dateSourceRank(best.source)) {
+          best = cur;
+        }
+      }
+    }
+
+    this.logger.debug(
+      `fetchStoryUpdatedAt ${url}: chosen source=${best.source} iso=${best.at.toISOString()} | candidates=${JSON.stringify(
+        pool.map((p) => ({
+          source: p.source,
+          iso: p.at.toISOString(),
+          raw: p.raw.length > 120 ? `${p.raw.slice(0, 117)}...` : p.raw,
+        })),
+      )}`,
+    );
+
+    return { updatedAt: best.at.toISOString(), source: best.source };
   }
 
   private extractLdModifiedDates(

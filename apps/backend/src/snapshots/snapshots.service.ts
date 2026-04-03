@@ -110,6 +110,27 @@ export interface SourceAnalyticsResponse {
   sources: SourceAnalyticsSourceMetrics[];
 }
 
+/** Story first seen in a time window (enriched from latest snapshot when possible). */
+export interface StoryInWindowRow {
+  story_key: string;
+  title: string;
+  url?: string;
+  first_seen_at: string;
+}
+
+export interface StoriesInWindowSourceRow {
+  source_id: string;
+  source_name: string;
+  stories_on_fold: number;
+  new_in_window: number;
+  stories: StoryInWindowRow[];
+}
+
+export interface StoriesInWindowResponse {
+  window_minutes: number;
+  sources: StoriesInWindowSourceRow[];
+}
+
 function medianSorted(sorted: number[]): number {
   if (sorted.length === 0) return 0;
   const mid = Math.floor(sorted.length / 2);
@@ -703,5 +724,95 @@ export class SnapshotsService implements OnModuleInit {
     }
 
     return { window_hours: windowHoursOut, sources };
+  }
+
+  /**
+   * Stories whose presence row has first_seen_at within the last `windowMinutes`
+   * (global clock), per source. Titles/URLs come from the latest snapshot when
+   * the story is still on the fold; otherwise a placeholder title is used.
+   */
+  async getStoriesInWindow(
+    sourceIds: string[],
+    windowMinutes: number,
+  ): Promise<StoriesInWindowResponse> {
+    const ids = [...new Set(sourceIds.map((id) => id.trim()).filter(Boolean))];
+    if (ids.length === 0 || !Number.isFinite(windowMinutes) || windowMinutes <= 0) {
+      return { window_minutes: windowMinutes, sources: [] };
+    }
+
+    const windowStart = new Date(Date.now() - windowMinutes * 60_000);
+    const presenceRows = await this.presenceRepo.find({
+      where: {
+        source_id: In(ids),
+        first_seen_at: MoreThanOrEqual(windowStart),
+      },
+      order: { first_seen_at: 'DESC' },
+    });
+
+    const table = this.repo.metadata.tableName;
+    const latestSnaps = await this.repo
+      .createQueryBuilder('snapshot')
+      .leftJoinAndSelect('snapshot.source', 'source')
+      .where('snapshot.source_id IN (:...ids)', { ids })
+      .andWhere(
+        `snapshot.id = (
+          SELECT s2.id FROM \`${table}\` s2
+          WHERE s2.source_id = snapshot.source_id
+          ORDER BY s2.created_at DESC, s2.id DESC
+          LIMIT 1
+        )`,
+      )
+      .getMany();
+
+    const snapBySource = new Map(latestSnaps.map((s) => [s.source_id, s]));
+    const bySourcePresence = new Map<string, StoryFoldPresence[]>();
+    for (const row of presenceRows) {
+      const list = bySourcePresence.get(row.source_id) ?? [];
+      list.push(row);
+      bySourcePresence.set(row.source_id, list);
+    }
+
+    const sources: StoriesInWindowSourceRow[] = [];
+
+    for (const sid of ids) {
+      const snap = snapBySource.get(sid);
+      const sourceName = snap?.source?.name ?? 'Unknown';
+      const foldStories = Array.isArray(snap?.stories) ? snap.stories : [];
+      const cappedFold = foldStories.slice(0, SnapshotsService.MAX_STORIES);
+      const digestToStory = new Map<string, StoryItem>();
+      for (const st of cappedFold) {
+        digestToStory.set(this.storyPresenceDbKey(st), st);
+      }
+
+      const pres = bySourcePresence.get(sid) ?? [];
+      const stories: StoryInWindowRow[] = pres.map((p) => {
+        const item = digestToStory.get(p.story_key);
+        return {
+          story_key: p.story_key,
+          title: item?.title?.trim() || 'Story not on current fold',
+          url: item?.url,
+          first_seen_at: p.first_seen_at.toISOString(),
+        };
+      });
+
+      stories.sort(
+        (a, b) =>
+          new Date(b.first_seen_at).getTime() -
+          new Date(a.first_seen_at).getTime(),
+      );
+
+      sources.push({
+        source_id: sid,
+        source_name: sourceName,
+        stories_on_fold: Math.min(
+          foldStories.length,
+          SnapshotsService.MAX_STORIES,
+        ),
+        new_in_window: stories.length,
+        stories,
+      });
+    }
+
+    return { window_minutes: windowMinutes, sources };
   }
 }

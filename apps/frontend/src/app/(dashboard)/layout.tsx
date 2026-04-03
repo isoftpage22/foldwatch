@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
 import type { CrawlStatus, SchedulerStatus, RunAllCrawlsResult } from '@/lib/api';
 import { useState, useEffect, useRef } from 'react';
+import { TimeRangeProvider, TimeRangeSelect } from '@/context/time-range-context';
 
 const navItems = [
   { href: '/', label: 'Overview', icon: LayoutDashboard },
@@ -101,6 +102,7 @@ export default function DashboardLayout({
   };
 
   return (
+    <TimeRangeProvider>
     <div className="flex h-screen bg-background">
       <aside className="hidden md:flex w-64 flex-col border-r bg-muted/30">
         <div className="flex items-center gap-2 px-6 py-5 border-b">
@@ -138,7 +140,8 @@ export default function DashboardLayout({
             <span className="font-bold">FoldWatch</span>
           </div>
           <div className="hidden md:block" />
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap justify-end">
+            <TimeRangeSelect className="order-first sm:order-none" />
             {isCrawling ? (
               <div className="flex flex-col items-end gap-0.5">
                 <div className="flex items-center gap-1.5 text-xs text-blue-600">
@@ -224,5 +227,6 @@ export default function DashboardLayout({
         <main className="flex-1 overflow-auto p-6">{children}</main>
       </div>
     </div>
+    </TimeRangeProvider>
   );
 }

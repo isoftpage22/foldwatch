@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
 import {
   Bar,
@@ -23,6 +22,10 @@ import type {
   SourceAnalyticsResponse,
   SourceAnalyticsSourceMetrics,
 } from '@/lib/api';
+import {
+  useTimeRange,
+  windowMinutesToAnalyticsHours,
+} from '@/context/time-range-context';
 
 const CHART_COLORS = [
   '#16a34a',
@@ -32,15 +35,6 @@ const CHART_COLORS = [
   '#dc2626',
   '#0891b2',
 ];
-
-type WindowKey = '24h' | '7d' | '30d' | 'all';
-
-const WINDOW_HOURS: Record<WindowKey, number | null> = {
-  '24h': 24,
-  '7d': 168,
-  '30d': 720,
-  all: null,
-};
 
 function mergeChurnRows(sources: SourceAnalyticsSourceMetrics[]) {
   const times = [
@@ -79,7 +73,7 @@ function tenureBarColor(minutes: number, maxMinutes: number): string {
 }
 
 export function SourceAnalytics({ snapshots }: { snapshots: Snapshot[] }) {
-  const [windowKey, setWindowKey] = useState<WindowKey>('7d');
+  const { minutes, label: rangeLabel } = useTimeRange();
   const [data, setData] = useState<SourceAnalyticsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -97,11 +91,8 @@ export function SourceAnalytics({ snapshots }: { snapshots: Snapshot[] }) {
     setLoading(true);
     setError(null);
     try {
-      const wh = WINDOW_HOURS[windowKey];
-      const q =
-        wh == null
-          ? `source_ids=${encodeURIComponent(sourceIds.join(','))}`
-          : `source_ids=${encodeURIComponent(sourceIds.join(','))}&window_hours=${wh}`;
+      const wh = windowMinutesToAnalyticsHours(minutes);
+      const q = `source_ids=${encodeURIComponent(sourceIds.join(','))}&window_hours=${wh}`;
       const res = await api.get<SourceAnalyticsResponse>(
         `/snapshots/source-analytics?${q}`,
       );
@@ -112,7 +103,7 @@ export function SourceAnalytics({ snapshots }: { snapshots: Snapshot[] }) {
     } finally {
       setLoading(false);
     }
-  }, [sourceIds, windowKey]);
+  }, [sourceIds, minutes]);
 
   useEffect(() => {
     void load();
@@ -164,22 +155,10 @@ export function SourceAnalytics({ snapshots }: { snapshots: Snapshot[] }) {
             <CardTitle className="text-lg">Source behavior analytics</CardTitle>
             <p className="text-sm text-muted-foreground font-normal mt-1">
               Story tenure on fold, churn between crawls, and freshness over
-              time — per source.
+              time — per source. Window matches the global time range in the
+              header (<span className="font-medium text-foreground">{rangeLabel}</span>
+              ).
             </p>
-          </div>
-          <div className="flex flex-wrap gap-1">
-            {(['24h', '7d', '30d', 'all'] as const).map((k) => (
-              <Button
-                key={k}
-                type="button"
-                variant={windowKey === k ? 'default' : 'outline'}
-                size="sm"
-                className="h-8"
-                onClick={() => setWindowKey(k)}
-              >
-                {k === 'all' ? 'All' : k}
-              </Button>
-            ))}
           </div>
         </div>
       </CardHeader>

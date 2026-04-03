@@ -13,15 +13,18 @@ import { api } from '@/lib/api';
 import type {
   Snapshot,
   PublishingVelocityResponse,
+  StoriesInWindowResponse,
   ComparisonRecord,
   ComparisonAnalysis,
 } from '@/lib/api';
+import { useTimeRange } from '@/context/time-range-context';
 import { Loader2, History, Eye, RefreshCw, Sparkles } from 'lucide-react';
 
 type SortKey = 'freshness' | 'name' | 'modified';
 const MAX_SELECTION = 3;
 
 export default function ComparePage() {
+  const { minutes, label: timeRangeLabel } = useTimeRange();
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortBy, setSortBy] = useState<SortKey>('freshness');
@@ -41,6 +44,12 @@ export default function ComparePage() {
   const [liveAnalysisError, setLiveAnalysisError] = useState<string | null>(
     null,
   );
+  const [storiesInWindow, setStoriesInWindow] =
+    useState<StoriesInWindowResponse | null>(null);
+  const [storiesInWindowLoading, setStoriesInWindowLoading] = useState(false);
+  const [storiesInWindowError, setStoriesInWindowError] = useState<
+    string | null
+  >(null);
 
   const fetchCompareSnapshots = useCallback(async () => {
     const res = await api.get<Snapshot[]>(
@@ -112,11 +121,12 @@ export default function ComparePage() {
       return;
     }
     const ids = Array.from(selected).join(',');
+    const windowHours = minutes / 60;
     let cancelled = false;
     setVelocityLoading(true);
     api
       .get<PublishingVelocityResponse>(
-        `/snapshots/publish-velocity?source_ids=${encodeURIComponent(ids)}&window_hours=24`,
+        `/snapshots/publish-velocity?source_ids=${encodeURIComponent(ids)}&window_hours=${windowHours}`,
       )
       .then((res) => {
         if (!cancelled) setVelocity24(res.data);
@@ -130,7 +140,40 @@ export default function ComparePage() {
     return () => {
       cancelled = true;
     };
-  }, [selected]);
+  }, [selected, minutes]);
+
+  useEffect(() => {
+    if (selected.size < 2) {
+      setStoriesInWindow(null);
+      setStoriesInWindowError(null);
+      return;
+    }
+    const ids = Array.from(selected).join(',');
+    let cancelled = false;
+    setStoriesInWindowLoading(true);
+    setStoriesInWindowError(null);
+    api
+      .get<StoriesInWindowResponse>(
+        `/snapshots/stories-in-window?source_ids=${encodeURIComponent(ids)}&window_minutes=${minutes}`,
+      )
+      .then((res) => {
+        if (!cancelled) setStoriesInWindow(res.data);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setStoriesInWindow(null);
+          setStoriesInWindowError(
+            e instanceof Error ? e.message : 'Failed to load window stories',
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setStoriesInWindowLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, minutes]);
 
   const toggleSource = (sourceId: string) => {
     setAnalysis(null);
@@ -346,6 +389,10 @@ export default function ComparePage() {
             snapshots={selectedSnapshots}
             velocity={velocity24}
             velocityLoading={velocityLoading}
+            storiesInWindow={storiesInWindow}
+            storiesInWindowLoading={storiesInWindowLoading}
+            storiesInWindowError={storiesInWindowError}
+            timeRangeLabel={timeRangeLabel}
           />
           {analysis && !viewingHistoryId && (
             <div className="space-y-3 rounded-lg border bg-card p-4">

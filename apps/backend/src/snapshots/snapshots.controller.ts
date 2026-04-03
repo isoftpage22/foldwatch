@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -78,8 +79,13 @@ export class SnapshotsController implements OnModuleInit {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
+    const wh =
+      windowHours !== undefined && windowHours !== ''
+        ? parseFloat(windowHours)
+        : undefined;
     const data = await this.snapshotsService.getPublishingVelocity(ids, {
-      windowHours: windowHours ? parseInt(windowHours, 10) : undefined,
+      windowHours:
+        wh !== undefined && Number.isFinite(wh) && wh > 0 ? wh : undefined,
       limit: limit ? parseInt(limit, 10) : undefined,
     });
     return ok(data);
@@ -95,10 +101,35 @@ export class SnapshotsController implements OnModuleInit {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    const wh = windowHours !== undefined ? parseInt(windowHours, 10) : undefined;
+    const wh =
+      windowHours !== undefined && windowHours !== ''
+        ? parseFloat(windowHours)
+        : undefined;
     const windowArg =
-      wh === undefined || Number.isNaN(wh) || wh <= 0 ? null : wh;
+      wh === undefined || !Number.isFinite(wh) || wh <= 0 ? null : wh;
     const data = await this.snapshotsService.getSourceAnalytics(ids, windowArg);
+    return ok(data);
+  }
+
+  @Get('stories-in-window')
+  @Header('Cache-Control', 'no-store')
+  async storiesInWindow(
+    @Query('source_ids') raw?: string,
+    @Query('window_minutes') windowMinutes?: string,
+  ) {
+    const ids = (raw || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const wm = parseInt(windowMinutes || '', 10);
+    /** ~10 years in minutes — sanity cap */
+    const MAX_WINDOW_MINUTES = 5_256_000;
+    if (!Number.isFinite(wm) || wm <= 0 || wm > MAX_WINDOW_MINUTES) {
+      throw new BadRequestException(
+        'window_minutes must be a positive number (up to ~10 years)',
+      );
+    }
+    const data = await this.snapshotsService.getStoriesInWindow(ids, wm);
     return ok(data);
   }
 

@@ -4,7 +4,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Sparkles } from 'lucide-react';
 import { CompareStoryCard } from '@/components/compare/compare-story-card';
-import type { PublishingVelocityResponse, Snapshot, StoryItem } from '@/lib/api';
+import type {
+  PublishingVelocityResponse,
+  Snapshot,
+  StoriesInWindowResponse,
+  StoryInWindowRow,
+  StoryItem,
+} from '@/lib/api';
 import { crawlUpdatedLabel, sourceUpdatedLabel } from '@/lib/format';
 
 const MAX_STORIES = 30;
@@ -13,13 +19,25 @@ export function CompareSourcesDetail({
   snapshots,
   velocity,
   velocityLoading,
+  storiesInWindow,
+  storiesInWindowLoading,
+  storiesInWindowError,
+  timeRangeLabel,
 }: {
   snapshots: Snapshot[];
   velocity: PublishingVelocityResponse | null;
   velocityLoading: boolean;
+  storiesInWindow: StoriesInWindowResponse | null;
+  storiesInWindowLoading: boolean;
+  storiesInWindowError: string | null;
+  timeRangeLabel: string;
 }) {
   void velocity;
   void velocityLoading;
+
+  const bySourceId = new Map(
+    (storiesInWindow?.sources ?? []).map((s) => [s.source_id, s]),
+  );
 
   return (
     <div className="space-y-6">
@@ -31,14 +49,26 @@ export function CompareSourcesDetail({
             Comparison summary
           </CardTitle>
           <p className="text-sm text-muted-foreground font-normal">
-            New items since the last crawl and which source is refreshing the fold
-            more often (normalized by crawl interval).
+            Stories <span className="font-medium text-foreground">first seen</span>{' '}
+            in the last <span className="font-medium text-foreground">{timeRangeLabel}</span>{' '}
+            (from fold presence, not only vs the previous crawl). Use the global
+            time-range control in the header.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
+          {storiesInWindowError && (
+            <p className="text-sm text-destructive">{storiesInWindowError}</p>
+          )}
+          {storiesInWindowLoading && (
+            <p className="text-xs text-muted-foreground flex items-center gap-2">
+              Loading window summary…
+            </p>
+          )}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {snapshots.map((snap) => {
-              const newList = snap.new_stories ?? [];
+              const row = bySourceId.get(snap.source_id);
+              const newList = row?.stories ?? [];
+              const foldTotal = row?.stories_on_fold ?? Math.min(snap.stories?.length ?? 0, MAX_STORIES);
               return (
                 <div
                   key={snap.source_id}
@@ -48,16 +78,16 @@ export function CompareSourcesDetail({
                   <p className="text-2xl font-bold tabular-nums">
                     {newList.length}
                     <span className="text-sm font-normal text-muted-foreground ml-1">
-                      new of {Math.min(snap.stories?.length ?? 0, MAX_STORIES)}
+                      new in window of {foldTotal}
                     </span>
                   </p>
                   {newList.length === 0 ? (
                     <p className="text-xs text-muted-foreground">
-                      No new links vs previous crawl.
+                      No stories first-seen in this window.
                     </p>
                   ) : (
                     <ul className="text-xs space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                      {newList.map((st: StoryItem, i: number) => (
+                      {newList.map((st: StoryInWindowRow, i: number) => (
                         <li key={i} className="line-clamp-2">
                           {st.url ? (
                             <a
